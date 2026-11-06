@@ -1,0 +1,329 @@
+{
+  "name": "Missed Call Text Back (No BS AI template)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "missed-call",
+        "options": {}
+      },
+      "id": "547bea89-7408-481c-bdd2-f7a0cc2a2d65",
+      "name": "Call Ended",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "d61b5003-a983-4076-98db-a4fa1191138c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// EDIT THESE for your business. Sample values only.\nconst settings = {\n  business_name: 'Sample Barber Shop',\n  booking_link: 'https://example.com/book',\n  // Your texting number, in +1 format. This is a fake sample number.\n  from_number: '+15555550100',\n  // Twilio send-message address. Put YOUR Account SID in place of YOUR_ACCOUNT_SID.\n  sms_api_url: 'https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json',\n  timezone: 'America/New_York',\n  // Only text between these hours (24 hour clock, local time).\n  text_from_hour: 8,\n  text_until_hour: 21,\n  // Don't text the same caller again within this many hours.\n  cooldown_hours: 12,\n};\nreturn $input.all().map(item => ({ json: { ...item.json, settings } }));\n"
+      },
+      "id": "2d872e28-8f87-4c62-986b-19f5ebd4008c",
+      "name": "Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Phone systems send a note when a call ends. Here we decide if it was missed.\n// Works with Twilio style fields (CallStatus, From, DialCallStatus) and simple JSON test calls.\nconst MISSED = ['no-answer', 'busy', 'failed', 'canceled', 'missed'];\nreturn $input.all().map(item => {\n  const body = item.json.body || item.json;\n  const status = String(body.DialCallStatus || body.CallStatus || body.status || '').toLowerCase();\n  const caller = String(body.From || body.from || body.caller || '').trim();\n  return { json: { settings: item.json.settings, caller_phone: caller, call_status: status, missed: MISSED.includes(status) } };\n});\n"
+      },
+      "id": "82994315-69c7-40bf-8dd2-09e6ad0c6e1b",
+      "name": "Was It Missed?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f0d3a3c6-9d6f-4d23-bb8c-eb8d9ac3366f",
+              "leftValue": "={{ $json.missed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6cfa037e-0740-4f36-b121-47bb993e4ab0",
+      "name": "Missed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Safety checks before we text anyone.\n// 1) Real looking phone number  2) Not opted out  3) Not texted recently  4) Not quiet hours\nconst store = $getWorkflowStaticData('global');\nstore.optedOut = store.optedOut || {};\nstore.lastTexted = store.lastTexted || {};\n\nreturn $input.all().map(item => {\n  const s = item.json.settings;\n  const caller = item.json.caller_phone;\n  const now = DateTime.now().setZone(s.timezone);\n  let ok = true, reason = 'ok';\n\n  if (!/^\\+[1-9]\\d{7,14}$/.test(caller)) { ok = false; reason = 'no valid caller number (maybe blocked or private)'; }\n  else if (store.optedOut[caller]) { ok = false; reason = 'caller opted out'; }\n  else if (store.lastTexted[caller] && (now.toMillis() - store.lastTexted[caller]) < s.cooldown_hours * 3600 * 1000) { ok = false; reason = 'already texted recently'; }\n  else if (now.hour < s.text_from_hour || now.hour >= s.text_until_hour) { ok = false; reason = 'quiet hours'; }\n\n  const message = `Hi! Sorry we missed your call at ${s.business_name}. ` +\n    `Book anytime here: ${s.booking_link} or just reply to this text and we will get back to you. ` +\n    `Reply STOP to opt out.`;\n\n  if (ok) store.lastTexted[caller] = now.toMillis();\n  return { json: { ...item.json, ok_to_text: ok, reason, message } };\n});\n"
+      },
+      "id": "94cc5f38-d8eb-4332-a319-3069594f01cc",
+      "name": "Safety Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "e982e28a-7848-46c8-8fd1-85843dbb2d2e",
+              "leftValue": "={{ $json.ok_to_text }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0b61c51-6e0c-4669-96fd-d56c7aa534f9",
+      "name": "OK to Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.settings.sms_api_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "To",
+              "value": "={{ $json.caller_phone }}"
+            },
+            {
+              "name": "From",
+              "value": "={{ $json.settings.from_number }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4022e696-a196-46f3-99e1-15538459562a",
+      "name": "Send Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "missed-call-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "72071ee0-0dad-4333-abd4-1cda628200da",
+      "name": "Text Reply In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "740002d5-8da1-4423-b95a-7e5d027158ff"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handles texts people send back. STOP words opt them out. START opts them back in.\nconst STOP = ['stop', 'stopall', 'unsubscribe', 'cancel', 'end', 'quit'];\nconst START = ['start', 'unstop', 'yes'];\nconst store = $getWorkflowStaticData('global');\nstore.optedOut = store.optedOut || {};\n\nreturn $input.all().map(item => {\n  const body = item.json.body || item.json;\n  const from = String(body.From || body.from || '').trim();\n  const text = String(body.Body || body.body || body.text || '').trim().toLowerCase();\n  let action = 'none';\n  if (from && STOP.includes(text)) { store.optedOut[from] = true; action = 'opted_out'; }\n  else if (from && START.includes(text)) { delete store.optedOut[from]; action = 'opted_in'; }\n  // Any other reply is a real customer message. Forward it to the owner here if you like.\n  return { json: { from, text, action } };\n});\n"
+      },
+      "id": "ceedd7c2-e2cc-45cb-b55c-6483c87aa45e",
+      "name": "Handle STOP and START",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<Response></Response>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "1e1b9e44-1785-434e-a068-e631d3d2aa78",
+      "name": "Reply OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Missed Call Text Back\nBuilt by Bobby Ve, No BS AI.\n\n1. Edit the **Settings** node.\n2. Add a Basic Auth credential to **Send Text** (Twilio Account SID + Auth Token).\n3. Point your phone number's call status webhook to **Call Ended**, and its text webhook to **Text Reply In**.\n\nEvery text ends with: Reply STOP to opt out.",
+        "height": 300,
+        "width": 420
+      },
+      "id": "665a5cb9-84e9-4726-905f-15caf492e5a4",
+      "name": "Read Me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -380
+      ]
+    }
+  ],
+  "connections": {
+    "Call Ended": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Was It Missed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was It Missed?": {
+      "main": [
+        [
+          {
+            "node": "Missed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Missed?": {
+      "main": [
+        [
+          {
+            "node": "Safety Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety Checks": {
+      "main": [
+        [
+          {
+            "node": "OK to Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK to Text?": {
+      "main": [
+        [
+          {
+            "node": "Send Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Reply In": {
+      "main": [
+        [
+          {
+            "node": "Handle STOP and START",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle STOP and START": {
+      "main": [
+        [
+          {
+            "node": "Reply OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "builtBy": "Bobby Ve, No BS AI"
+  },
+  "tags": []
+}
